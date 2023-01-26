@@ -26,7 +26,7 @@ if __name__ == "__main__":
     # l: {1,...,p+1} the index for the barrier
 
     ## create variables, where are the binary?
-    eta       = cp.Variable(1,name="eta")
+    # eta       = cp.Variable(1,name="eta")
     r         = cp.Variable(1,name="r")
     D         = cp.Variable(1,name="D")
     gamma_0   = cp.Variable(1,name="gamma_0")
@@ -36,20 +36,32 @@ if __name__ == "__main__":
     max_val   = cp.Variable(1,name="max_val")
 
     ## set the objective
-    prob = cp.Problem(cp.Maximize(r),
+    # prob = cp.Problem(cp.Maximize(r),
+    #                   [b(0,x0) >= chi,
+    #                    b(10,xi) >= chi,
+    #                    gamma_0 <= h(x0) + eps,
+    #                    max_val <= cp.minimum(r,gamma_0) + eps,
+    #                    max_val >= cp.maximum(r,gamma_0) - eps,
+    #                    max_val + eps <= gamma_inf,
+    #                    gamma_inf <= h(xi) - eps,
+    #                 #    eta >= eps,
+    #                    r >= eps,
+    #                    D >= eps])
+    # prob.solve()
+
+    ## feasibility
+    prob = cp.Problem(cp.Minimize(0),
                       [b(0,x0) >= chi,
                        b(10,xi) >= chi,
                        gamma_0 <= h(x0) + eps,
-                       max_val <= cp.minimum(r,gamma_0) + eps,
-                       max_val >= cp.maximum(r,gamma_0) - eps,
+                       max_val <= cp.minimum(5,gamma_0) + eps,
+                       max_val >= cp.maximum(5,gamma_0) - eps,
                        max_val + eps <= gamma_inf,
-                       gamma_inf <= h(xi) - eps,
-                       eta >= eps,
-                       r >= eps,
-                       D >= eps])
+                       gamma_inf <= h(xi) - eps])
     prob.solve()
+
     print("\nThe optimal value is", prob.value)
-    print("eta: ", eta.value)
+    # print("eta: ", eta.value)
     print("r: ", r.value)
     print("D: ", D.value)
     print("gamma_0: ", gamma_0.value)
