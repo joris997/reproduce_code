@@ -214,46 +214,37 @@ class DecentralizedSolver(CentralizedSolver):
             self.robots[i].y = []
             for j in range(self.N):
                 yj_ij = np.array([])
-                yj_ji = np.array([])
                 for i_2 in range(len(self.robots)):
-                    if i != i_2:
-                        # append Deltap_ij to yj_ij and Deltap_ji to yj_ji
-                        Deltap = np.array(self.robots[i].x0[0:2] - self.robots[i_2].x0[0:2])
-                        yj_ij = np.hstack((yj_ij, Deltap.reshape(1,2).flatten()))
-                        yj_ji = np.hstack((yj_ji, -Deltap.reshape(1,2).flatten()))
-                yj = np.hstack((yj_ij,yj_ji))
-                self.robots[i].y.append(yj)
+                    # we don't check for i!=i_2 because it allows easy indexing later
+                    # append Deltap_ij to yj_ij
+                    yj_ij = np.hstack((yj_ij,self.robots[i].x0[0:2] - self.robots[i_2].x0[0:2]))
+                self.robots[i].y.append(yj_ij)
 
-            self.robots[i].lambda_ = [np.zeros(2*2) for _ in range(self.N)]
+            self.robots[i].lambda_ = [np.zeros(2*(len(self.robots)-1+1)) for _ in range(self.N)]
             self.robots[i].rho = 2
             self.robots[i].beta = 1
+
             # also initialize b_i ([p_{j|i}^T p_{i|j}^T]) with the ground truth of x0
             self.robots[i].b_i = []
             for j in range(self.N):
                 bj_ij = np.array([])
-                bj_ji = np.array([])
                 for i_2 in range(len(self.robots)):
-                    if i != i_2:
-                        bj_ij = np.hstack((bj_ij,self.robots[i_2].x0[0:2]))
-                        bj_ji = np.hstack((bj_ji,self.robots[i_2].x0[0:2]))
-                bj = np.hstack((bj_ij,bj_ji))
-                self.robots[i].b_i.append(bj)
+                    # we don't check for i!=i_2 because it allows easy indexing later
+                    # to check the believe of relative robots
+                    bj_ij = np.hstack((bj_ij,self.robots[i_2].x0[0:2]))
+                self.robots[i].b_i.append(bj_ij)
 
             # also create A_i and B_i
-            E_i = np.array([[1,0,0,0,0,0, 0,0],[0,1,0,0,0,0, 0,0]])
-            F = E_i
-            self.robots[i].A_i = np.concatenate((E_i,F),axis=0)
+            E_i = np.array([[1,0,0,0,0,0, 0,0],
+                            [0,1,0,0,0,0, 0,0]])
+            # A_i is (len(self.robots)-1) concatenations of E_i
+            self.robots[i].A_i = np.tile(E_i, (len(self.robots)-1+1,1))
             # B = [-I, -I, I, I] where the number of -I and I is equal to len(self.robots)-1
             # mI = np.tile(-np.eye(2), (1, len(self.robots)-1))
             # pI = np.tile(np.eye(2), (1, len(self.robots)-1))
-            # self.robots[i].B_i = np.hstack([mI,pI]).T
-            mI_block = np.kron(np.eye(len(self.robots)-1), -np.eye(2))  # Repeat mI N times
-            pI_block = np.kron(np.eye(len(self.robots)-1), np.eye(2))  # Repeat pI N times
-
-            # Combine into a single block diagonal matrix if needed
-            self.robots[i].B_i = np.block([[mI_block, np.zeros_like(mI_block)], [np.zeros_like(pI_block), pI_block]])
-
-
+            # We add an extra B_i because we include the trivial: p_i - \Delta p_{i,i} = p_{i|i}
+            
+            self.robots[i].B_i = np.kron(np.eye(len(self.robots)-1+1), -np.eye(2))  # Repeat mI N times
 
     def solve_local_problem(self,t,i):
         # Solve the local optimization problem in Eq. (13)
@@ -290,17 +281,15 @@ class DecentralizedSolver(CentralizedSolver):
         # Eq. 10g
         # c_{(i,j)|i}(t+k) > 0, j\neq i
         for j in range(self.N):
-            cnt = 0
             for i_2 in range(len(self.robots)):
                 if i_2 != i:
                     # TODO: fix this belief part
-                    x_diff = x_vars[j][0:2] - self.robots[i].b_i[j][2*cnt:2*cnt+2]
+                    x_diff = x_vars[j][0:2] - self.robots[i].b_i[j][2*i_2:2*i_2+2]
                     eq4_matrix = ca.MX(np.array([[1/(self.robots[i].R + self.robots[i_2].R)**2, 0],
                                                  [0, 1/(self.robots[i].R + self.robots[i_2].R)**2]]))
                     con_ineq.append(x_diff.T@eq4_matrix@x_diff)
                     con_ineq_lb.append(1)
                     con_ineq_ub.append(ca.inf)
-                cnt += 1
         
         # Eq. 10h
         # c_{(j,k)|i}(t+k) > 0, j\neq i
@@ -313,7 +302,7 @@ class DecentralizedSolver(CentralizedSolver):
             obj += u_vars[j].T@self.R@u_vars[j]
         
         # for all combinations (i,j), (i,k), (j,k), dimension of (i,j) itself is 2, put it into a vector
-        y_vars = [opti.variable(2*2*(len(self.robots)-1)) for _ in range(self.N)]
+        y_vars = [opti.variable(2*(len(self.robots)-1+1)) for _ in range(self.N)]
         for j in range(self.N):
             # We only take the first 6 columns of A_i, because those are for the states, others are for control
             obj += ca.dot(ca.MX(self.robots[i].lambda_[j]),
@@ -339,14 +328,14 @@ class DecentralizedSolver(CentralizedSolver):
             sol = opti.solve()
         except RuntimeError as e:
             # Assuming x_vars and u_vars are your decision variables
-            for i, x_var in enumerate(x_vars):
+            for j, x_var in enumerate(x_vars):
                 x_ref = self.robots[0].get_x_ref(t + i*self.dt)
                 print(f"x[{i}] reference value:", x_ref)
                 try:
                     print(f"x[{i}] latest value:", opti.debug.value(x_var))
                 except Exception as e:
                     print("Error retrieving latest value for x[{}]: {}".format(i, e))
-            for i, u_var in enumerate(u_vars):
+            for j, u_var in enumerate(u_vars):
                 try:
                     print(f"u[{i}] latest value:", opti.debug.value(u_var))
                 except Exception as e:
