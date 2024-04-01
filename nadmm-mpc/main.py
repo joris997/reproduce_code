@@ -7,6 +7,13 @@ import time
 from Robot import Robot, ReferenceTrajectory
 from Plotter import Plotter
     
+def stack_dict(dict):
+    # stack all dictionary items in increasing order of key
+    # also consider they might not exist
+    stack = np.array([])
+    for key in sorted(dict.keys()):
+        stack = np.hstack((stack, dict[key]))
+    return stack
     
 class CentralizedSolver:
     def __init__(self,robots,t_range):
@@ -132,7 +139,7 @@ class DecentralizedSolver(CentralizedSolver):
 
     def solve(self):
         print("Solving")
-        max_iter = 100
+        max_iter = 2
         x0 = [self.robots[i].x0 for i in range(len(self.robots))]
 
         # populate x_vars_hist and u_vars_hist with the initial values
@@ -147,17 +154,19 @@ class DecentralizedSolver(CentralizedSolver):
             for _ in range(max_iter):
                 for i in range(len(self.robots)):
                     # update b_i
+                    # first creat y by looping through the .y[j] dictionary and stacking them in increasing order of key
                     for j in range(self.N):
-                        A_ixsi_i = (self.robots[i].A_i@self.robots[i].xsi[j]).flatten()
-                        B_iy_i = self.robots[i].B_i@self.robots[i].y[j]
-
-                        self.robots[i].b_i[j] = A_ixsi_i + B_iy_i
+                        for i_2 in range(len(self.robots)):
+                            A_ixsi_i = (self.robots[i].A_i@self.robots[i].xsi[j]).flatten()
+                            if i != i_2:
+                                B_iy_i = -np.eye(2)@self.robots[i].y[j][i_2]
+                                self.robots[i].b_i[j][i_2] = A_ixsi_i + B_iy_i
 
                     # \hat\lambda_i^s <- \lambda_i^s - \rho(1-\beta)*(A_i \xsi_i^s + B_i y_i^s - b_i)
                     for j in range(self.N):
                         A_ixsi_i = (self.robots[i].A_i@self.robots[i].xsi[j]).flatten()
-                        B_iy_i = self.robots[i].B_i@self.robots[i].y[j]
-                        b_i = self.robots[i].b_i[j]
+                        B_iy_i = self.robots[i].B_i@stack_dict(self.robots[i].y[j])
+                        b_i = stack_dict(self.robots[i].b_i[j])
 
                         self.robots[i].lambda_[j] -= self.robots[i].rho*(1-self.robots[i].beta)*(A_ixsi_i + B_iy_i - b_i)
                     
@@ -167,8 +176,8 @@ class DecentralizedSolver(CentralizedSolver):
                     # \lambda_i^{s+1} <- \hat\lambda_^s + \rho(A_i\xsi_i^{s+1} + B_i y_i^s - b_i)
                     for j in range(self.N):
                         A_ixsi_i = self.robots[i].A_i@self.robots[i].xsi[j]
-                        B_iy_i = self.robots[i].B_i@self.robots[i].y[j]
-                        b_i = self.robots[i].b_i[j]
+                        B_iy_i = self.robots[i].B_i@stack_dict(self.robots[i].y[j])
+                        b_i = stack_dict(self.robots[i].b_i[j])
 
                         self.robots[i].lambda_[j] += self.robots[i].rho*(A_ixsi_i + B_iy_i - b_i)
                     
@@ -180,12 +189,12 @@ class DecentralizedSolver(CentralizedSolver):
                     # \Delta p_{ij} = ((p_i - p_{j|i}) + (p_j - p_{i|j}))/2
                     # \eta_{j|i} = \eta_j
                     for j in range(self.N):
-                        yj_ij = np.array([])
+                        yj_ij = {}
                         for i_2 in range(len(self.robots)):
                             if i != i_2:
-                                Delta_ij = ((self.robots[i].xsi[j][0:2] - self.robots[i_2].b_i[j][i*2:i*2+2]) +
-                                            (self.robots[i].b_i[j][i_2*2:i_2*2+2] - self.robots[i_2].xsi[j][0:2]))/2
-                                yj_ij = np.hstack((yj_ij, Delta_ij))    
+                                Delta_ij = ((self.robots[i].xsi[j][0:2] - self.robots[i].b_i[j][i_2]) +
+                                            (self.robots[i_2].b_i[j][i] - self.robots[i_2].xsi[j][0:2]))/2
+                                yj_ij[i_2] = Delta_ij
                         self.robots[i].y[j] = yj_ij    
 
                     # Robot i sends/receives updates to/from neighbors
@@ -199,11 +208,23 @@ class DecentralizedSolver(CentralizedSolver):
                 self.robots[i].u_vars_hist.append(u_vars_i)
 
             # Update \xsi_i^0 
-            x0 = [self.robots[i].xsi[0][0:self.nx] for i in range(len(self.robots))] 
+            print("\nTaking step")
+            x0 = [self.robots[i].xsi[1][0:self.nx] for i in range(len(self.robots))] 
             for i in range(len(self.robots)):
-                self.robots[i].x0 = x0[i]   
+                self.robots[i].x0 = x0[i]  
+                print("Robot ",i, " x0: ", self.robots[i].x0) 
 
-    
+
+    def print_robot_params(self,i):
+        # print some ADMM information of the agent, round to two digits
+        print("Robot ",i)
+        print("xsi:    ",np.round(self.robots[i].xsi[0],2))
+        print("y:      ",self.robots[i].y[0])
+        print("lambda: ",np.round(self.robots[i].lambda_[0]))
+        print("b_i:    ",self.robots[i].b_i[0])
+        print("")
+
+
     def set_initial_values(self):
         # - Each robot initializes \xsi_i^0, y_i^0, \lambda_i^0, \rho, \beta
         for i in range(len(self.robots)):
@@ -213,38 +234,38 @@ class DecentralizedSolver(CentralizedSolver):
 
             self.robots[i].y = []
             for j in range(self.N):
-                yj_ij = np.array([])
+                yj_ij = {}
                 for i_2 in range(len(self.robots)):
-                    # we don't check for i!=i_2 because it allows easy indexing later
-                    # append Deltap_ij to yj_ij
-                    yj_ij = np.hstack((yj_ij,self.robots[i].x0[0:2] - self.robots[i_2].x0[0:2]))
+                    if i != i_2:
+                        yj_ij[i_2] = self.robots[i].x0[0:2] - self.robots[i_2].x0[0:2]
                 self.robots[i].y.append(yj_ij)
 
-            self.robots[i].lambda_ = [np.zeros(2*(len(self.robots)-1+1)) for _ in range(self.N)]
+            self.robots[i].lambda_ = [np.zeros(2*(len(self.robots)-1)) for _ in range(self.N)]
             self.robots[i].rho = 2
             self.robots[i].beta = 1
 
             # also initialize b_i ([p_{j|i}^T p_{i|j}^T]) with the ground truth of x0
             self.robots[i].b_i = []
             for j in range(self.N):
-                bj_ij = np.array([])
+                bj_ij = {}
                 for i_2 in range(len(self.robots)):
-                    # we don't check for i!=i_2 because it allows easy indexing later
-                    # to check the believe of relative robots
-                    bj_ij = np.hstack((bj_ij,self.robots[i_2].x0[0:2]))
+                    if i != i_2:
+                        bj_ij[i_2] = self.robots[i_2].x0[0:2]
                 self.robots[i].b_i.append(bj_ij)
 
             # also create A_i and B_i
-            E_i = np.array([[1,0,0,0,0,0, 0,0],
-                            [0,1,0,0,0,0, 0,0]])
-            # A_i is (len(self.robots)-1) concatenations of E_i
-            self.robots[i].A_i = np.tile(E_i, (len(self.robots)-1+1,1))
+            F = np.eye(2, self.robots[i].nx + self.robots[i].nu)
+            # repeat this vertically N times
+            self.robots[i].A_i = np.tile(F, (len(self.robots)-1, 1))
             # B = [-I, -I, I, I] where the number of -I and I is equal to len(self.robots)-1
-            # mI = np.tile(-np.eye(2), (1, len(self.robots)-1))
-            # pI = np.tile(np.eye(2), (1, len(self.robots)-1))
-            # We add an extra B_i because we include the trivial: p_i - \Delta p_{i,i} = p_{i|i}
-            
-            self.robots[i].B_i = np.kron(np.eye(len(self.robots)-1+1), -np.eye(2))  # Repeat mI N times
+            I = -np.eye(2)  # Repeat mI N times
+            # repeat put this as block-diagonal N times
+            self.robots[i].B_i = np.kron(np.eye(len(self.robots)-1), I)
+
+            self.print_robot_params(i)
+
+
+
 
     def solve_local_problem(self,t,i):
         # Solve the local optimization problem in Eq. (13)
@@ -253,6 +274,19 @@ class DecentralizedSolver(CentralizedSolver):
         x_vars = [opti.variable(self.nx) for _ in range(self.N+1)]
         u_vars = [opti.variable(self.nu) for _ in range(self.N)]
         xsi_vars = [ca.vertcat(x_vars[j], u_vars[j]) for j in range(self.N)]
+
+        for j in range(self.N):
+            # Set initial condition equal to reference state
+            if len(self.robots[i].x_vars_hist) > 0:
+                opti.set_initial(x_vars[j],self.robots[i].x_vars_hist[-1][j])
+                # print("setting init condition: ", self.robots[i].x_vars_hist[-1][j])
+            else:
+                opti.set_initial(x_vars[j],np.ones(self.nx))
+            if len(self.robots[i].u_vars_hist) > 0:
+                opti.set_initial(u_vars[j],self.robots[i].u_vars_hist[-1][j])
+            else:
+                opti.set_initial(u_vars[j],np.ones(self.nu))
+
 
         con_eq = []
         con_ineq = []
@@ -263,13 +297,16 @@ class DecentralizedSolver(CentralizedSolver):
         # Eq. 9b
         for j in range(self.N):
             con_eq.append(x_vars[j+1] - self.robots[i].dynamics(x_vars[j],u_vars[j],self.dt))
+
         # Eq. 9c
         con_eq.append(x_vars[0] - self.robots[i].x0)
+
         # Eq. 9d
-        for j in range(self.N):
+        for j in range(self.N+1):
             con_ineq.append(x_vars[j])
             con_ineq_lb.append(self.robots[i].x_lb)
             con_ineq_ub.append(self.robots[i].x_ub)
+        for j in range(self.N):
             con_ineq.append(u_vars[j])
             con_ineq_lb.append(self.robots[i].u_lb)
             con_ineq_ub.append(self.robots[i].u_ub)
@@ -283,8 +320,7 @@ class DecentralizedSolver(CentralizedSolver):
         for j in range(self.N):
             for i_2 in range(len(self.robots)):
                 if i_2 != i:
-                    # TODO: fix this belief part
-                    x_diff = x_vars[j][0:2] - self.robots[i].b_i[j][2*i_2:2*i_2+2]
+                    x_diff = x_vars[j][0:2] - self.robots[i].b_i[j][i_2]
                     eq4_matrix = ca.MX(np.array([[1/(self.robots[i].R + self.robots[i_2].R)**2, 0],
                                                  [0, 1/(self.robots[i].R + self.robots[i_2].R)**2]]))
                     con_ineq.append(x_diff.T@eq4_matrix@x_diff)
@@ -296,50 +332,66 @@ class DecentralizedSolver(CentralizedSolver):
         # Do we really need this? Seems trivial w.r.t. Eq. 10g
                     
         # Lagrangian
-        for j in range(self.N):
+        for j in range(self.N+1):
             x_ref = self.robots[i].get_x_ref(t + j*self.dt)
             obj += (x_vars[j]-x_ref).T@self.Q@(x_vars[j]-x_ref)
+        for j in range(self.N):
             obj += u_vars[j].T@self.R@u_vars[j]
         
         # for all combinations (i,j), (i,k), (j,k), dimension of (i,j) itself is 2, put it into a vector
-        y_vars = [opti.variable(2*(len(self.robots)-1+1)) for _ in range(self.N)]
+        y_vars = [opti.variable(2*(len(self.robots)-1)) for _ in range(self.N)]
         for j in range(self.N):
-            # We only take the first 6 columns of A_i, because those are for the states, others are for control
+            # initial condition
+            cnt = 0
+            for i_2 in range(len(self.robots)):
+                if i != i_2:
+                    # print("setting init condition: ", self.robots[i].y[j][i_2])
+                    opti.set_initial(y_vars[j][2*cnt:2*cnt+2],self.robots[i].y[j][i_2])
+            # bounds
+            con_ineq.append(y_vars[j])
+            con_ineq_lb.append(ca.vertcat([-42,-42]))
+            con_ineq_ub.append(ca.vertcat([42,42]))
+
+        # <\lambda_i^s, A_i \xsi_i^s + B_i y_i^s - b_i>
+        for j in range(self.N):
             obj += ca.dot(ca.MX(self.robots[i].lambda_[j]),
-                          self.robots[i].A_i@xsi_vars[j] + self.robots[i].B_i@y_vars[j] - ca.MX(self.robots[i].b_i[j]))
+                          self.robots[i].A_i@xsi_vars[j] + self.robots[i].B_i@y_vars[j] - ca.MX(stack_dict(self.robots[i].b_i[j])))
         
+        # \rho/2 ||A_i \xsi_i^s + B_i y_i^s - b_i||^2
         for j in range(self.N):
-            obj += (self.robots[i].rho / 2) * ca.norm_2(
-                self.robots[i].A_i@xsi_vars[j] + self.robots[i].B_i@y_vars[j] - ca.MX(self.robots[i].b_i[j]))**2
+            obj += (self.robots[i].rho / 2) * ca.sumsqr(
+                xsi_vars[j][0:2]  -y_vars[j] - ca.MX(stack_dict(self.robots[i].b_i[j])))
 
         # Solve
-        opts = {'ipopt.print_level':0, 'print_time':0, 'ipopt.tol':1e-3}
+        opts = {'ipopt.print_level':0, 'print_time':0, 'ipopt.tol':1e-2}
         opti.solver('ipopt',opts)
 
         # asign variables, cost, and constraints to opti
         opti.minimize(obj)
-        for i in range(len(con_eq)):
-            opti.subject_to(con_eq[i] == 0)
-        for i in range(len(con_ineq)):
-            opti.subject_to(opti.bounded(con_ineq_lb[i],con_ineq[i],con_ineq_ub[i]))
+        for k in range(len(con_eq)):
+            opti.subject_to(con_eq[k] == 0)
+        for k in range(len(con_ineq)):
+            opti.subject_to(opti.bounded(con_ineq_lb[k],con_ineq[k],con_ineq_ub[k]))
         
         solve_time = -time.time()
         try:
             sol = opti.solve()
         except RuntimeError as e:
+            # opti.debug.show_infeasibilities()
             # Assuming x_vars and u_vars are your decision variables
-            for j, x_var in enumerate(x_vars):
-                x_ref = self.robots[0].get_x_ref(t + i*self.dt)
-                print(f"x[{i}] reference value:", x_ref)
-                try:
-                    print(f"x[{i}] latest value:", opti.debug.value(x_var))
-                except Exception as e:
-                    print("Error retrieving latest value for x[{}]: {}".format(i, e))
-            for j, u_var in enumerate(u_vars):
-                try:
-                    print(f"u[{i}] latest value:", opti.debug.value(u_var))
-                except Exception as e:
-                    print("Error retrieving latest value for u[{}]: {}".format(i, e))
+            # for j, x_var in enumerate(x_vars):
+            #     x_ref = self.robots[0].get_x_ref(t + i*self.dt)
+            #     print(f"x[{i}] reference value:", x_ref)
+            #     try:
+            #         print(f"x[{i}] latest value:", opti.debug.value(x_var))
+            #     except Exception as e:
+            #         print("Error retrieving latest value for x[{}]: {}".format(i, e))
+            # for j, u_var in enumerate(u_vars):
+            #     try:
+            #         print(f"u[{i}] latest value:", opti.debug.value(u_var))
+            #     except Exception as e:
+            #         print("Error retrieving latest value for u[{}]: {}".format(i, e))
+            a=1
         solve_time += time.time()
         print("-------------------")
         print("Time:       ", t)
@@ -349,10 +401,18 @@ class DecentralizedSolver(CentralizedSolver):
         print("u: ", np.round(sol.value(u_vars[0]),2))
 
         # Create xsi which is an array (for each j in N) of the stacked x and u
-        xsi = np.vstack([sol.value(xsi_vars[j]) for j in range(self.N)])
+        xsi = [sol.value(xsi_vars[j]) for j in range(self.N)]
         
         # Create y which is an array (for each j in N) of \Deltap
-        y = np.vstack([sol.value(y_vars[j]) for j in range(self.N)])
+        y = []
+        for j in range(self.N):
+            y_j = {}
+            cnt = 0
+            for i_2 in range(len(self.robots)):
+                if i != i_2:
+                    y_j[i_2] = sol.value(y_vars[j][2*cnt:2*cnt+2])
+                    cnt += 1
+            y.append(y_j)
         
         return xsi, y
 
