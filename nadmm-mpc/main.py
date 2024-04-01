@@ -162,12 +162,12 @@ class DecentralizedSolver(CentralizedSolver):
                         self.robots[i].lambda_[j] -= self.robots[i].rho*(1-self.robots[i].beta)*(A_ixsi_i + B_iy_i - b_i)
                     
                     # \xsi_i^{s+1} <- \argmin_{\xsi_i} L_i(\xsi_i,y_i^s,\lambda_i^s)
-                    xsi,y = self.solve_local_problem(t,i)
+                    self.robots[i].xsi,self.robots[i].y = self.solve_local_problem(t,i)
 
                     # \lambda_i^{s+1} <- \hat\lambda_^s + \rho(A_i\xsi_i^{s+1} + B_i y_i^s - b_i)
                     for j in range(self.N):
-                        A_ixsi_i = self.robots[i].A_i@xsi[j]
-                        B_iy_i = self.robots[i].B_i@y[j]
+                        A_ixsi_i = self.robots[i].A_i@self.robots[i].xsi[j]
+                        B_iy_i = self.robots[i].B_i@self.robots[i].y[j]
                         b_i = self.robots[i].b_i[j]
 
                         self.robots[i].lambda_[j] += self.robots[i].rho*(A_ixsi_i + B_iy_i - b_i)
@@ -207,7 +207,10 @@ class DecentralizedSolver(CentralizedSolver):
     def set_initial_values(self):
         # - Each robot initializes \xsi_i^0, y_i^0, \lambda_i^0, \rho, \beta
         for i in range(len(self.robots)):
-            self.robots[i].xsi = [np.zeros(self.robots[i].nx + self.robots[i].nu) for _ in range(self.N)]
+            self.robots[i].xsi = []
+            for j in range(self.N):
+                self.robots[i].xsi.append(np.concatenate((self.robots[i].x0, np.zeros(self.robots[i].nu))))
+
             self.robots[i].y = []
             for j in range(self.N):
                 yj_ij = np.array([])
@@ -217,7 +220,7 @@ class DecentralizedSolver(CentralizedSolver):
                         # append Deltap_ij to yj_ij and Deltap_ji to yj_ji
                         Deltap = np.array(self.robots[i].x0[0:2] - self.robots[i_2].x0[0:2])
                         yj_ij = np.hstack((yj_ij, Deltap.reshape(1,2).flatten()))
-                        # yj_ji = np.hstack((yj_ji, -Deltap.reshape(1,2).flatten()))
+                        yj_ji = np.hstack((yj_ji, -Deltap.reshape(1,2).flatten()))
                 yj = np.hstack((yj_ij,yj_ji))
                 self.robots[i].y.append(yj)
 
@@ -227,16 +230,12 @@ class DecentralizedSolver(CentralizedSolver):
             # also initialize b_i ([p_{j|i}^T p_{i|j}^T]) with the ground truth of x0
             self.robots[i].b_i = []
             for j in range(self.N):
-                # bj_ij = np.zeros((2*len(self.robots)))
-                # bj_ji = np.zeros((2*len(self.robots)))
                 bj_ij = np.array([])
                 bj_ji = np.array([])
                 for i_2 in range(len(self.robots)):
                     if i != i_2:
-                        # bj_ij[2*i_2:2*i_2+2] = self.robots[i_2].x0[0:2]
-                        # bj_ji[2*i_2:2*i_2+2] = self.robots[i].x0[0:2]
                         bj_ij = np.hstack((bj_ij,self.robots[i_2].x0[0:2]))
-                        bj_ji = np.hstack((bj_ji,self.robots[i].x0[0:2]))
+                        bj_ji = np.hstack((bj_ji,self.robots[i_2].x0[0:2]))
                 bj = np.hstack((bj_ij,bj_ji))
                 self.robots[i].b_i.append(bj)
 
@@ -245,7 +244,15 @@ class DecentralizedSolver(CentralizedSolver):
             F = E_i
             self.robots[i].A_i = np.concatenate((E_i,F),axis=0)
             # B = [-I, -I, I, I] where the number of -I and I is equal to len(self.robots)-1
-            self.robots[i].B_i = np.hstack([np.tile(-np.eye(2), (1, len(self.robots)-1)), np.tile(np.eye(2), (1, len(self.robots)-1))]).T
+            # mI = np.tile(-np.eye(2), (1, len(self.robots)-1))
+            # pI = np.tile(np.eye(2), (1, len(self.robots)-1))
+            # self.robots[i].B_i = np.hstack([mI,pI]).T
+            mI_block = np.kron(np.eye(len(self.robots)-1), -np.eye(2))  # Repeat mI N times
+            pI_block = np.kron(np.eye(len(self.robots)-1), np.eye(2))  # Repeat pI N times
+
+            # Combine into a single block diagonal matrix if needed
+            self.robots[i].B_i = np.block([[mI_block, np.zeros_like(mI_block)], [np.zeros_like(pI_block), pI_block]])
+
 
 
     def solve_local_problem(self,t,i):
@@ -254,6 +261,7 @@ class DecentralizedSolver(CentralizedSolver):
 
         x_vars = [opti.variable(self.nx) for _ in range(self.N+1)]
         u_vars = [opti.variable(self.nu) for _ in range(self.N)]
+        xsi_vars = [ca.vertcat(x_vars[j], u_vars[j]) for j in range(self.N)]
 
         con_eq = []
         con_ineq = []
@@ -292,7 +300,7 @@ class DecentralizedSolver(CentralizedSolver):
                     con_ineq.append(x_diff.T@eq4_matrix@x_diff)
                     con_ineq_lb.append(1)
                     con_ineq_ub.append(ca.inf)
-                    cnt += 1
+                cnt += 1
         
         # Eq. 10h
         # c_{(j,k)|i}(t+k) > 0, j\neq i
@@ -305,15 +313,15 @@ class DecentralizedSolver(CentralizedSolver):
             obj += u_vars[j].T@self.R@u_vars[j]
         
         # for all combinations (i,j), (i,k), (j,k), dimension of (i,j) itself is 2, put it into a vector
-        Deltap_vars = [opti.variable(2*(len(self.robots)-1)) for _ in range(self.N)]
+        y_vars = [opti.variable(2*2*(len(self.robots)-1)) for _ in range(self.N)]
         for j in range(self.N):
             # We only take the first 6 columns of A_i, because those are for the states, others are for control
             obj += ca.dot(ca.MX(self.robots[i].lambda_[j]),
-                          self.robots[i].A_i[:,0:6]@x_vars[j] + self.robots[i].B_i@Deltap_vars[j] - ca.MX(self.robots[i].b_i[j]))
+                          self.robots[i].A_i@xsi_vars[j] + self.robots[i].B_i@y_vars[j] - ca.MX(self.robots[i].b_i[j]))
         
         for j in range(self.N):
             obj += (self.robots[i].rho / 2) * ca.norm_2(
-                self.robots[i].A_i[:,0:6]@x_vars[j] + self.robots[i].B_i@Deltap_vars[j] - ca.MX(self.robots[i].b_i[j]))**2
+                self.robots[i].A_i@xsi_vars[j] + self.robots[i].B_i@y_vars[j] - ca.MX(self.robots[i].b_i[j]))**2
 
         # Solve
         opts = {'ipopt.print_level':0, 'print_time':0, 'ipopt.tol':1e-3}
@@ -352,10 +360,10 @@ class DecentralizedSolver(CentralizedSolver):
         print("u: ", np.round(sol.value(u_vars[0]),2))
 
         # Create xsi which is an array (for each j in N) of the stacked x and u
-        xsi = np.vstack([np.concatenate((sol.value(x_vars[j]), sol.value(u_vars[j]))) for j in range(self.N)])
+        xsi = np.vstack([sol.value(xsi_vars[j]) for j in range(self.N)])
         
         # Create y which is an array (for each j in N) of \Deltap
-        y = np.vstack([sol.value(Deltap_vars[j]) for j in range(self.N)])
+        y = np.vstack([sol.value(y_vars[j]) for j in range(self.N)])
         
         return xsi, y
 
