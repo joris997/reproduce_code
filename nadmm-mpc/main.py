@@ -139,28 +139,29 @@ class DecentralizedSolver(CentralizedSolver):
 
     def solve(self):
         print("Solving")
-        max_iter = 1
+        max_iter = 2
         x0 = [self.robots[i].x0 for i in range(len(self.robots))]
-
-        # populate x_vars_hist and u_vars_hist with the initial values
-        for i in range(len(self.robots)):
-            self.robots[i].x_vars_hist.append([self.robots[i].x0 for _ in range(self.N+1)])
-            self.robots[i].u_vars_hist.append([np.zeros(self.robots[i].nu) for _ in range(self.N)])
 
         # Decentralized NADMM for MPC problems
         self.set_initial_values()
 
         for t in np.arange(self.t_range[0],self.t_range[-1]+1e-5,self.dt):
-            for _ in range(max_iter):
+            for it in range(max_iter):
                 for i in range(len(self.robots)):
+                    print("------- t: ", t, " Iteration: ",it," Robot: ",i," -------")
                     # update b_i
                     # first creat y by looping through the .y[j] dictionary and stacking them in increasing order of key
                     for j in range(self.N):
+                        A_ixsi_i = (self.robots[i].A_i@self.robots[i].xsi[j]).flatten()
                         for i_2 in range(len(self.robots)):
-                            A_ixsi_i = (self.robots[i].A_i@self.robots[i].xsi[j]).flatten()
                             if i != i_2:
-                                B_iy_i = -np.eye(2)@self.robots[i].y[j][i_2]
-                                self.robots[i].b_i[j][i_2] = A_ixsi_i + B_iy_i
+                                B_iy_i = self.robots[i].B_i@self.robots[i].y[j][i_2]
+                                # self.robots[i].b_i[j][i_2] = A_ixsi_i + B_iy_i
+                                # print("we used to do: ", A_ixsi_i + B_iy_i)
+                                self.robots[i].b_i[j][i_2] = self.robots[i_2].xsi[j][0:2]
+                                # print("we now do:     ", self.robots[i_2].xsi[j][0:2])
+                        if j == 0:
+                            print("Robot ",i, " b_i: ", self.robots[i].b_i[j])
 
                     # \hat\lambda_i^s <- \lambda_i^s - \rho(1-\beta)*(A_i \xsi_i^s + B_i y_i^s - b_i)
                     for j in range(self.N):
@@ -189,12 +190,12 @@ class DecentralizedSolver(CentralizedSolver):
                         for i_2 in range(len(self.robots)):
                             if i != i_2:
                                 bj_ij[i_2] = self.robots[i_2].xsi[j][0:2]
-                        
                         if j == 0:
                             print("Robot ",i, " b_i was:     ", self.robots[i].b_i[j])
                             print("Robot ",i, " b_i becomes: ", bj_ij)
                         self.robots[i].b_i[j] = bj_ij
                 
+
 
                 for i in range(len(self.robots)):
                     # update y_i^{s+1} (Eq. 15)
@@ -213,12 +214,17 @@ class DecentralizedSolver(CentralizedSolver):
                         if j == 0:
                             print("Robot ",i, " y was:     ", self.robots[i].y[j])
                             print("Robot ",i, " y becomes: ", yj_ij)
-                        self.robots[i].y[j] = yj_ij    
+                        self.robots[i].y[j] = yj_ij
+
+                    
                 
 
             for i in range(len(self.robots)):
                 # Select u_i(1) and implement it
-                x_vars_i = [self.robots[i].xsi[j][0:self.nx] for j in range(self.N)]
+                # hacky but to each self.robots[i].xsi[j], we append the last index again to get N+1
+                self.robots[i].xsi = self.robots[i].xsi + [self.robots[i].xsi[-1]]
+
+                x_vars_i = [self.robots[i].xsi[j][0:self.nx] for j in range(self.N+1)]
                 u_vars_i = [self.robots[i].xsi[j][self.nx:] for j in range(self.N)]
                 self.robots[i].x_vars_hist.append(x_vars_i)
                 self.robots[i].u_vars_hist.append(u_vars_i)
@@ -235,6 +241,9 @@ class DecentralizedSolver(CentralizedSolver):
                 self.robots[i].x0 = x0[i]  
                 self.robots[i].xsi = self.robots[i].xsi[1:] + [self.robots[i].xsi[-1]]
                 print("Robot ",i, " x0: ", self.robots[i].x0)
+
+            # if t >= 4.7:
+            #     break
 
 
     def print_robot_params(self,i):
@@ -286,7 +295,30 @@ class DecentralizedSolver(CentralizedSolver):
 
             self.print_robot_params(i)
 
+            # populate x_vars_hist and u_vars_hist with the initial values
+            self.robots[i].x_vars_hist.append([self.robots[i].x0 for _ in range(self.N+1)])
+            self.robots[i].u_vars_hist.append([np.zeros(self.robots[i].nu) for _ in range(self.N)])
 
+
+    def set_initial_guess(self,opti,x_vars,u_vars,y_vars,i,t):
+        # Set initial condition equal to reference state
+        if len(self.robots[i].x_vars_hist) > 0:
+            for j in range(self.N):
+                opti.set_initial(x_vars[j],self.robots[i].x_vars_hist[-1][j+1])
+            opti.set_initial(x_vars[-1],self.robots[i].x_vars_hist[-1][-1])
+        if len(self.robots[i].u_vars_hist) > 0:
+            for j in range(self.N-1):
+                opti.set_initial(u_vars[j],self.robots[i].u_vars_hist[-1][j+1])
+            opti.set_initial(u_vars[-1],self.robots[i].u_vars_hist[-1][-1])
+        
+        for j in range(self.N):
+            # initial condition
+            cnt = 0
+            for i_2 in range(len(self.robots)):
+                if i != i_2:
+                    # print("setting init condition: ", self.robots[i].y[j][i_2])
+                    opti.set_initial(y_vars[j][2*cnt:2*cnt+2],self.robots[i].y[j][i_2])
+                    cnt += 1
 
 
     def solve_local_problem(self,t,i):
@@ -296,19 +328,10 @@ class DecentralizedSolver(CentralizedSolver):
         x_vars = [opti.variable(self.nx) for _ in range(self.N+1)]
         u_vars = [opti.variable(self.nu) for _ in range(self.N)]
         xsi_vars = [ca.vertcat(x_vars[j], u_vars[j]) for j in range(self.N)]
+        y_vars = [opti.variable(2*(len(self.robots)-1)) for _ in range(self.N)]
 
-        for j in range(self.N):
-            # Set initial condition equal to reference state
-            if len(self.robots[i].x_vars_hist) > 0:
-                opti.set_initial(x_vars[j],self.robots[i].x_vars_hist[-1][j])
-                # print("setting init condition: ", self.robots[i].x_vars_hist[-1][j])
-            else:
-                opti.set_initial(x_vars[j],np.ones(self.nx))
-            if len(self.robots[i].u_vars_hist) > 0:
-                opti.set_initial(u_vars[j],self.robots[i].u_vars_hist[-1][j])
-            else:
-                opti.set_initial(u_vars[j],np.ones(self.nu))
-
+        # Set initial condition equal to reference state
+        self.set_initial_guess(opti, x_vars, u_vars, y_vars, i, t)
 
         con_eq = []
         con_ineq = []
@@ -361,14 +384,8 @@ class DecentralizedSolver(CentralizedSolver):
             obj += u_vars[j].T@self.R@u_vars[j]
         
         # for all combinations (i,j), (i,k), (j,k), dimension of (i,j) itself is 2, put it into a vector
-        y_vars = [opti.variable(2*(len(self.robots)-1)) for _ in range(self.N)]
+        
         for j in range(self.N):
-            # initial condition
-            cnt = 0
-            for i_2 in range(len(self.robots)):
-                if i != i_2:
-                    # print("setting init condition: ", self.robots[i].y[j][i_2])
-                    opti.set_initial(y_vars[j][2*cnt:2*cnt+2],self.robots[i].y[j][i_2])
             # bounds
             con_ineq.append(y_vars[j])
             con_ineq_lb.append(ca.vertcat([-42,-42]))
@@ -415,12 +432,11 @@ class DecentralizedSolver(CentralizedSolver):
             #         print("Error retrieving latest value for u[{}]: {}".format(i, e))
             a=1
         solve_time += time.time()
-        print("-------------------")
-        print("Time:       ", t)
-        print("Status:     ", sol.stats()['return_status'])
-        print("x[0]:  ", np.round(sol.value(x_vars[0]),2))
-        print("x[-1]: ", np.round(sol.value(x_vars[-1]),2))
-        print("u: ", np.round(sol.value(u_vars[0]),2))
+        print("Time:   ", t)
+        print("Status: ", sol.stats()['return_status'])
+        print("x[0]:   ", np.round(sol.value(x_vars[0]),2))
+        print("x[-1]:  ", np.round(sol.value(x_vars[-1]),2))
+        print("u:      ", np.round(sol.value(u_vars[0]),2))
 
         # Create xsi which is an array (for each j in N) of the stacked x and u
         xsi = [sol.value(xsi_vars[j]) for j in range(self.N)]

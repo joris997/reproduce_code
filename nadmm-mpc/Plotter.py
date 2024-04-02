@@ -25,8 +25,8 @@ class Plotter():
         for i in range(len(self.robots)):
             for j in range(len(self.robots[i].x_vars_hist)):
                 x_vars = self.robots[i].x_vars_hist[j]
-                x_traj = np.array([x_vars[i][0] for i in range(self.N)]) # +1
-                y_traj = np.array([x_vars[i][1] for i in range(self.N)]) # +1
+                x_traj = np.array([x_vars[i][0] for i in range(self.N+1)]) # +1
+                y_traj = np.array([x_vars[i][1] for i in range(self.N+1)]) # +1
                 axs[0].plot(x_traj,y_traj,'k')
         axs[0].axis('equal')
 
@@ -80,8 +80,8 @@ class Plotter():
                      [self.robots[0].y_lim[0],self.robots[0].y_lim[0],self.robots[0].y_lim[1],self.robots[0].y_lim[1],self.robots[0].y_lim[0]],'k')
         for i in range(len(self.robots)):
             x_vars = self.robots[i].x_vars_hist[j]
-            x_traj = np.array([x_vars[k][0] for k in range(self.N)]) # +1
-            y_traj = np.array([x_vars[k][1] for k in range(self.N)]) # +1
+            x_traj = np.array([x_vars[k][0] for k in range(self.N+1)]) # +1
+            y_traj = np.array([x_vars[k][1] for k in range(self.N+1)]) # +1
             self.ax.plot(x_traj,y_traj,'k')
             self.ax.plot(x_traj[0],y_traj[0],'ro')
         self.ax.axis('equal')
