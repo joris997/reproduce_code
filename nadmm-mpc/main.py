@@ -139,7 +139,7 @@ class DecentralizedSolver(CentralizedSolver):
 
     def solve(self):
         print("Solving")
-        max_iter = 2
+        max_iter = 1
         x0 = [self.robots[i].x0 for i in range(len(self.robots))]
 
         # populate x_vars_hist and u_vars_hist with the initial values
@@ -181,25 +181,41 @@ class DecentralizedSolver(CentralizedSolver):
 
                         self.robots[i].lambda_[j] += self.robots[i].rho*(A_ixsi_i + B_iy_i - b_i)
                     
+                for i in range(len(self.robots)):
                     # Robot i sends/receives updates to/from neighbors
-                    # return 0
+                    # send the predicted position and orientation for each time step
+                    for j in range(self.N):
+                        bj_ij = {}
+                        for i_2 in range(len(self.robots)):
+                            if i != i_2:
+                                bj_ij[i_2] = self.robots[i_2].xsi[j][0:2]
+                        
+                        if j == 0:
+                            print("Robot ",i, " b_i was:     ", self.robots[i].b_i[j])
+                            print("Robot ",i, " b_i becomes: ", bj_ij)
+                        self.robots[i].b_i[j] = bj_ij
                 
+
                 for i in range(len(self.robots)):
                     # update y_i^{s+1} (Eq. 15)
+                    # Robot i sends/receives updates to/from neighbors
                     # \Delta p_{ij} = ((p_i - p_{j|i}) + (p_j - p_{i|j}))/2
                     # \eta_{j|i} = \eta_j
                     for j in range(self.N):
                         yj_ij = {}
                         for i_2 in range(len(self.robots)):
                             if i != i_2:
+                                # Delta_ij = ((self.robots[i].b_i[j][i_2] - self.robots[i].xsi[j][0:2]) +
+                                #             (self.robots[i_2].xsi[j][0:2] - self.robots[i_2].b_i[j][i]))/2
                                 Delta_ij = ((self.robots[i].xsi[j][0:2] - self.robots[i].b_i[j][i_2]) +
                                             (self.robots[i_2].b_i[j][i] - self.robots[i_2].xsi[j][0:2]))/2
                                 yj_ij[i_2] = Delta_ij
+                        if j == 0:
+                            print("Robot ",i, " y was:     ", self.robots[i].y[j])
+                            print("Robot ",i, " y becomes: ", yj_ij)
                         self.robots[i].y[j] = yj_ij    
-
-                    # Robot i sends/receives updates to/from neighbors
-                    # return 0
                 
+
             for i in range(len(self.robots)):
                 # Select u_i(1) and implement it
                 x_vars_i = [self.robots[i].xsi[j][0:self.nx] for j in range(self.N)]
@@ -207,12 +223,18 @@ class DecentralizedSolver(CentralizedSolver):
                 self.robots[i].x_vars_hist.append(x_vars_i)
                 self.robots[i].u_vars_hist.append(u_vars_i)
 
+                # save local variables that change in loop: b, y, lambda
+                self.robots[i].b_hist.append(stack_dict(self.robots[i].b_i[0]))
+                self.robots[i].y_hist.append(stack_dict(self.robots[i].y[0]))
+                self.robots[i].lambda_hist.append(self.robots[i].lambda_[0])
+
             # Update \xsi_i^0 
             print("\nTaking step")
             x0 = [self.robots[i].xsi[1][0:self.nx] for i in range(len(self.robots))] 
             for i in range(len(self.robots)):
                 self.robots[i].x0 = x0[i]  
-                print("Robot ",i, " x0: ", self.robots[i].x0) 
+                self.robots[i].xsi = self.robots[i].xsi[1:] + [self.robots[i].xsi[-1]]
+                print("Robot ",i, " x0: ", self.robots[i].x0)
 
 
     def print_robot_params(self,i):

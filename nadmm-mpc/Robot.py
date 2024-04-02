@@ -43,6 +43,10 @@ class Robot:
         self.x_vars_hist = []
         self.u_vars_hist = []
 
+        self.b_hist = []
+        self.y_hist = []
+        self.lambda_hist = []
+
     def dynamics(self, x, u, dt=0.1):
         # x = [x, y, eta, v_x, a_y, omega]
         # u = [a_x, delta]
