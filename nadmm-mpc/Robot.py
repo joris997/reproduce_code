@@ -35,8 +35,8 @@ class Robot:
         self.u_lb = np.array([self.ax_lim[0],self.delta_lim[0]])
         self.u_ub = np.array([self.ax_lim[1],self.delta_lim[1]])
 
-        self.L = 4
-        self.R = 1
+        self.L = 3   # wheelbase
+        self.R = 1.5 # radius of the robot
 
         # saving stuff
         self.x_hist = []
@@ -69,4 +69,6 @@ class Robot:
             for i in range(self.nx):
                 x_ref[i] = np.interp(t,self.x_ref.t_range,self.x_ref.x_range[:,i])
         return x_ref
+
+    # def run_synchronous_mpc(self):
 

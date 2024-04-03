@@ -105,23 +105,23 @@ class CentralizedSolver:
                 # Assuming x_vars and u_vars are your decision variables
                 for i, x_var in enumerate(x_vars[0]):
                     x_ref = self.robots[0].get_x_ref(t + i*self.dt)
-                    print(f"x[{i}] reference value:", x_ref)
+                    print(f"x[{i}] reference value: ", x_ref)
                     try:
-                        print(f"x[{i}] latest value:", opti.debug.value(x_var))
+                        print(f"x[{i}] latest value: ", opti.debug.value(x_var))
                     except Exception as e:
                         print("Error retrieving latest value for x[{}]: {}".format(i, e))
                 for i, u_var in enumerate(u_vars[0]):
                     try:
-                        print(f"u[{i}] latest value:", opti.debug.value(u_var))
+                        print(f"u[{i}] latest value: ", opti.debug.value(u_var))
                     except Exception as e:
                         print("Error retrieving latest value for u[{}]: {}".format(i, e))
             solve_time += time.time()
             print("-------------------")
-            print("Time:       ", t)
-            print("Status:     ", sol.stats()['return_status'])
-            print("x[0]:  ", np.round(sol.value(x_vars[0][0]),2))
-            print("x[-1]: ", np.round(sol.value(x_vars[0][-1]),2))
-            print("u: ", np.round(sol.value(u_vars[0][0]),2))
+            print("Time:   ", t)
+            print("Status: ", sol.stats()['return_status'])
+            print("x[0]:   ", np.round(sol.value(x_vars[0][0]),2))
+            print("x[-1]:  ", np.round(sol.value(x_vars[0][-1]),2))
+            print("u:      ", np.round(sol.value(u_vars[0][0]),2))
 
             # save results
             for i in range(len(self.robots)):
@@ -155,7 +155,7 @@ class DecentralizedSolver(CentralizedSolver):
                         A_ixsi_i = (self.robots[i].A_i@self.robots[i].xsi[j]).flatten()
                         for i_2 in range(len(self.robots)):
                             if i != i_2:
-                                B_iy_i = self.robots[i].B_i@self.robots[i].y[j][i_2]
+                                # B_iy_i = self.robots[i].B_i@self.robots[i].y[j][i_2]
                                 # self.robots[i].b_i[j][i_2] = A_ixsi_i + B_iy_i
                                 # print("we used to do: ", A_ixsi_i + B_iy_i)
                                 self.robots[i].b_i[j][i_2] = self.robots[i_2].xsi[j][0:2]
@@ -304,7 +304,10 @@ class DecentralizedSolver(CentralizedSolver):
         # Set initial condition equal to reference state
         if len(self.robots[i].x_vars_hist) > 0:
             for j in range(self.N):
+                # get some random noise
+                # r = np.random.normal(0, 0.1, x_vars[j].shape[0])
                 opti.set_initial(x_vars[j],self.robots[i].x_vars_hist[-1][j+1])
+            # r = np.random.normal(0, 0.1, x_vars[-1].shape[0])
             opti.set_initial(x_vars[-1],self.robots[i].x_vars_hist[-1][-1])
         if len(self.robots[i].u_vars_hist) > 0:
             for j in range(self.N-1):
@@ -388,8 +391,9 @@ class DecentralizedSolver(CentralizedSolver):
         for j in range(self.N):
             # bounds
             con_ineq.append(y_vars[j])
-            con_ineq_lb.append(ca.vertcat([-42,-42]))
-            con_ineq_ub.append(ca.vertcat([42,42]))
+            # create lb of variable length, length of y_vars[j]
+            con_ineq_lb.append(-42*ca.DM.ones(y_vars[j].shape))
+            con_ineq_ub.append(42*ca.DM.ones(y_vars[j].shape))
 
         # <\lambda_i^s, A_i \xsi_i^s + B_i y_i^s - b_i>
         for j in range(self.N):
@@ -399,7 +403,7 @@ class DecentralizedSolver(CentralizedSolver):
         # \rho/2 ||A_i \xsi_i^s + B_i y_i^s - b_i||^2
         for j in range(self.N):
             obj += (self.robots[i].rho / 2) * ca.sumsqr(
-                xsi_vars[j][0:2]  -y_vars[j] - ca.MX(stack_dict(self.robots[i].b_i[j])))
+                self.robots[i].A_i@xsi_vars[j] + self.robots[i].B_i@y_vars[j] - ca.MX(stack_dict(self.robots[i].b_i[j])))
 
         # Solve
         opts = {'ipopt.print_level':0, 'print_time':0, 'ipopt.tol':1e-2}
@@ -460,22 +464,22 @@ if __name__ == "__main__":
     t_range = np.array([0,10])
 
     x_ref_r1 = ReferenceTrajectory(t_range=t_range, x_range=np.array([[-20,20,-np.deg2rad(45),0,0,0],
-                                                                      [20,-20,-np.deg2rad(45),0,0,0],]))
+                                                                      [16,-20,-np.deg2rad(45),0,0,0],]))
     r1 = Robot(x0=np.array([-20,20,-np.deg2rad(45),0,0,0]),x_ref=x_ref_r1,id=1)
 
     x_ref_r2 = ReferenceTrajectory(t_range=t_range, x_range=np.array([[20,20,-np.deg2rad(135),0,0,0],
-                                                                      [-20,-20,-np.deg2rad(135),0,0,0],]))
+                                                                      [-20,-16,-np.deg2rad(135),0,0,0],]))
     r2 = Robot(x0=np.array([20,20,-np.deg2rad(135),0,0,0]),x_ref=x_ref_r2,id=2)
 
     x_ref_r3 = ReferenceTrajectory(t_range=t_range, x_range=np.array([[20,-20,np.deg2rad(135),0,0,0],
-                                                                      [-20,20,np.deg2rad(135),0,0,0],]))
+                                                                      [-16,20,np.deg2rad(135),0,0,0],]))
     r3 = Robot(x0=np.array([20,-20,np.deg2rad(135),0,0,0]),x_ref=x_ref_r3,id=3)
 
     x_ref_r4 = ReferenceTrajectory(t_range=t_range, x_range=np.array([[-20,-20,np.deg2rad(45),0,0,0],
-                                                                      [20,20,np.deg2rad(45),0,0,0],]))
+                                                                      [20,16,np.deg2rad(45),0,0,0],]))
     r4 = Robot(x0=np.array([-20,-20,np.deg2rad(45),0,0,0]),x_ref=x_ref_r4,id=4)
 
-    robots = [r1,r2]
+    robots = [r1,r2,r3,r4]
     # solver = CentralizedSolver(robots,t_range)
     solver = DecentralizedSolver(robots,t_range)
     solver.solve()
