@@ -4,6 +4,7 @@ from matplotlib.animation import FuncAnimation
 import casadi as ca
 import casadi.tools as ca_tools
 import time
+from helpers import stack_dict, smooth_min, smooth_max
 
 class ReferenceTrajectory:
     def __init__(self, t_range,x_range):
@@ -36,7 +37,7 @@ class Robot:
         self.u_ub = np.array([self.ax_lim[1],self.delta_lim[1]])
 
         self.L = 3   # wheelbase
-        self.R = 1.5 # radius of the robot
+        self.R = 2 # radius of the robot
 
         # saving stuff
         self.x_hist = []
@@ -46,6 +47,8 @@ class Robot:
         self.b_hist = []
         self.y_hist = []
         self.lambda_hist = []
+
+        self.preds = []
 
     def dynamics(self, x, u, dt=0.1):
         # x = [x, y, eta, v_x, a_y, omega]
@@ -70,5 +73,29 @@ class Robot:
                 x_ref[i] = np.interp(t,self.x_ref.t_range,self.x_ref.x_range[:,i])
         return x_ref
 
-    # def run_synchronous_mpc(self):
+    def add_phi(self,id):
+        print("Adding phi for Robot ",self.id," for id: ",id)
+        if id == 0:
+            # \phi = \Box_{[3,4]}(||x(t) - c||_2^2 \leq c_r^2)
+            c = np.array([-5,5])
+            c_r = 5
+            # now create a lambda function that, given x as ca.MX, returns c_r^2 - ||x - c||_2^2
+            self.p = lambda x: c_r**2 - ca.sumsqr(x[0:2]-c)
+            self.I = np.array([3,4])
+            self.type = "Always"
+
+            self.preds.append({"c":c,"c_r":c_r})
+        else:
+            print("No phi for id != 0")
+
+    def get_p(self,x_vars,t_vars):
+        # create the vector of x_vars for which t_vars lies in self.I
+        x_in_I = [x for x,t in zip(x_vars,t_vars) if self.I[0] <= t <= self.I[1]]
+
+        if self.type == "Always":
+            return smooth_min([self.p(x) for x in x_in_I])
+        elif self.type == "Eventually":
+            return smooth_max([self.p(x) for x in x_in_I])
+
+
 
