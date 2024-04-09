@@ -28,7 +28,7 @@ class Plotter():
             # create cirkel with self.robots[i].R radius
             circle = patches.Circle((self.robots[i].x_vars_hist[0][0][0],self.robots[i].x_vars_hist[0][0][1]),self.robots[i].R,fill=True)
             axs[0,0].add_patch(circle)
-            axs[0,0].text(self.robots[i].x_vars_hist[0][0][0],self.robots[i].x_vars_hist[0][0][1],str(i))
+            axs[0,0].text(self.robots[i].x_vars_hist[0][0][0],self.robots[i].x_vars_hist[0][0][1],str(i),fontsize=24,color='red')
 
         # plot the mpc trajectory
         for i in range(len(self.robots)):
@@ -46,7 +46,7 @@ class Plotter():
             axs[0,1].plot(bx_traj,'r')
             axs[0,1].plot(by_traj,'b')
             axs[0,1].legend(['x p_[1|0]','y p_[1|0]'])
-            axs[0,1].set_title('Belief of other agent state')
+            axs[0,1].set_title('Belief of agent 1 by agent 0')
             axs[0,1].grid(True)
 
             bx_traj = [self.robots[1].b_hist[j][0] for j in range(len(self.robots[1].b_hist))]
@@ -54,7 +54,7 @@ class Plotter():
             axs[1,1].plot(bx_traj,'r')
             axs[1,1].plot(by_traj,'b')
             axs[1,1].legend(['x p_[0|1]','y p_[0|1]'])            
-            axs[1,1].set_title('Belief of other agent state')
+            axs[1,1].set_title('Belief of agent 0 by agent 1')
             axs[1,1].grid(True)
 
         if len(self.robots[i].y_hist) > 0:
