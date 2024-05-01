@@ -38,10 +38,10 @@ class Net(nn.Module):
 
 if __name__ == '__main__':
     # Create a dataset
-    x = np.linspace(-2*np.pi, 2*np.pi, 200) + np.random.normal(0, 0.2, 200)
+    x = np.linspace(-2*np.pi, 2*np.pi, 200)
     y = true_function(x)
     data = np.column_stack((x, y))
-    # np.random.shuffle(data)
+    np.random.shuffle(data)
     
     # Split the data into training and testing sets
     split_idx = int(0.8 * len(data))
@@ -51,9 +51,6 @@ if __name__ == '__main__':
     y_train = torch.tensor(train_data[:, 1], dtype=torch.float32).view(-1, 1)
     x_test = torch.tensor(test_data[:, 0], dtype=torch.float32).view(-1, 1)
     y_test = torch.tensor(test_data[:, 1], dtype=torch.float32).view(-1, 1)
-
-    x_tensor = torch.tensor(x, dtype=torch.float32).view(-1, 1)
-    y_tensor = torch.tensor(y, dtype=torch.float32).view(-1, 1)
 
     # Instantiate the model, loss function, and optimizer
     model = Net()
@@ -67,21 +64,28 @@ if __name__ == '__main__':
     model.eval()
     with torch.no_grad():
         predictions = model(x_train)
-        residuals = y_train - predictions
+        residuals = np.abs(y_train - predictions)
+    
+    residuals = residuals.flatten()
+    residuals_sorted = np.sort(residuals)
 
     # Determine the error bounds at a given confidence level (95%)
-    alpha = 0.05
-    quantile = np.quantile(np.abs(residuals), 1 - alpha / 2)
+    delta = 0.05
+    quantile = np.quantile(residuals_sorted, 1 - delta,method='higher')
+    C = residuals_sorted[np.ceil(( (len(x_train))*(1-delta) )).astype(int)]
+    print("R(k): ", np.ceil(( (len(x_train)) * (1-delta))).astype(int))
+    print("Quantile: ", quantile)
+    print("C: ", C)
+
 
     # Prediction with bounds
     model.eval()
     with torch.no_grad():
-        predictions = model(x_train).numpy()
-        lower_bound = predictions - quantile
-        upper_bound = predictions + quantile
+        predictions = model(x_test).numpy().flatten()
+        x_test = x_test.numpy().flatten()
+        error = C*np.ones_like(predictions)
 
     plt.plot(x, y, label='True function', color='red')
-    plt.scatter(x_train, predictions, label='NN approximation')
-    plt.fill_between(x_train.numpy().flatten(), lower_bound.flatten(), upper_bound.flatten(), alpha=0.5, label='95% confidence interval')
+    plt.errorbar(x_test, predictions, yerr=error, fmt='o', label='NN approximation with error bars')
     plt.legend()
     plt.show()
